@@ -1,45 +1,46 @@
 // Core Libs & Utils
 import React, { PureComponent } from 'react';
-import cx from 'classnames';
 import QrReader from 'react-qr-reader';
-import LightningPayReq from './lib/bolt11';
-import { formatDetailsKey } from './utils/keys';
-import { formatTimestamp } from './utils/timestamp';
+import cx from 'classnames';
 
 // Assets
+import boltImage from './assets/images/bolt.png';
 import arrowImage from './assets/images/arrow.svg';
 import closeImage from './assets/images/close.svg';
-import githubImage from './assets/images/github.svg';
-import bitcoinImage from './assets/images/bitcoin.svg';
-import boltImage from './assets/images/bolt.png';
 import qrcodeImage from './assets/images/qrcode.png';
+import githubImage from './assets/images/github.svg';
+
+// Utils
+import { formatDetailsKey } from './utils/keys';
+import { parseInvoice } from './utils/invoices';
 
 // Constants
 import {
   APP_NAME,
+  APP_GITHUB,
   APP_TAGLINE,
   APP_INPUT_PLACEHOLDER,
-  APP_GITHUB,
-  DONATION_BTC,
 } from './constants/app';
 import {
   TAGS_KEY,
-  TIMESTAMP_KEY,
-  WORDS_TEMP_KEY,
+  COMPLETE_KEY,
+  LNURL_METADATA_KEY,
   TIMESTAMP_STRING_KEY,
+  CALLBACK_KEY,
+  LNURL_TAG_KEY,
 } from './constants/keys';
 
 // Styles
 import './assets/styles/main.scss';
 
 const INITIAL_STATE = {
-  decodedInvoice: {},
+  text: '',
   error: {},
   hasError: false,
+  decodedInvoice: {},
+  isQRCodeOpened: false,
   isInvoiceLoaded: false,
   isBitcoinAddrOpened: false,
-  text: '',
-  isQRCodeOpened: false,
 };
 
 export class App extends PureComponent {
@@ -49,32 +50,45 @@ export class App extends PureComponent {
     ...INITIAL_STATE,
   }));
 
-  getInvoiceDetails = (text) => this.setState(() => {
-    try {
-      const decodedInvoice = LightningPayReq.decode(text);
+  getInvoiceDetails = async (text) => {
+    console.log({ text });
 
-      return {
-        decodedInvoice,
-        isInvoiceLoaded: true,
-        hasError: false,
-        error: {},
-      };
-    } catch (error) {
-      return {
-        isInvoiceLoaded: false,
+    try {
+      let response;
+      const { isLNURL, data } = await parseInvoice(text);
+
+      if (isLNURL) {
+        response = await data;
+      } else {
+        response = data;
+      }
+
+      if (response) {
+        this.setState(() => ({
+          isLNURL,
+          error: {},
+          hasError: false,
+          isInvoiceLoaded: true,
+          decodedInvoice: response,
+        }));
+      }
+    } catch(error) {
+      this.setState(() => ({
+        error: error,
         hasError: true,
-        error,
-      };
+        decodedInvoice: {},
+        isInvoiceLoaded: false,
+      }));
     }
-  });
+  }
 
   handleChange = (event) => {
     const { target: { value: text } } = event;
 
     this.setState(() => ({
       text,
-      hasError: false,
       error: {},
+      hasError: false,
     }));
   }
 
@@ -85,10 +99,6 @@ export class App extends PureComponent {
       this.getInvoiceDetails(text);
     }
   }
-
-  handleBitcoinClick = () => this.setState(prevState => ({
-    isBitcoinAddrOpened: !prevState.isBitcoinAddrOpened,
-  }));
 
   handleQRCode = () => this.setState(prevState => ({
     isQRCodeOpened: !prevState.isQRCodeOpened
@@ -142,8 +152,7 @@ export class App extends PureComponent {
     const invoiceDetails = Object.keys(decodedInvoice)
       .map((key) => {
         switch (key) {
-          case WORDS_TEMP_KEY:
-          case TIMESTAMP_KEY:
+          case COMPLETE_KEY:
             return null;
           case TAGS_KEY:
             return this.renderInvoiceInnerItem(key);
@@ -173,36 +182,58 @@ export class App extends PureComponent {
       typeof tag.data !== 'number'
     ) ? renderNestedTag(tag) : renderNormalTag(tag);
 
+    const renderNestedItem = (label, value) => (
+      <div
+        key={label}
+        className='invoice__nested-item'
+      >
+        <div className='invoice__nested-title'>
+          {formatDetailsKey(label)}
+        </div>
+        <div className='invoice__nested-value'>
+          {value}
+        </div>
+      </div>
+    );
+
     const renderNestedTag = (tag) => (
-      <div className='invoice__item invoice__item--nested'>
+      <div key={tag.tagName} className='invoice__item invoice__item--nested'>
         <div className='invoice__item-title'>
           {formatDetailsKey(tag.tagName)}
         </div>
         <div className='invoice__item-value invoice__item-value--nested'>
-          {Object.keys(tag.data).map((key) => (
-            <div
-              key={key}
-              className='invoice__nested-item'
-            >
-              <div className='invoice__nested-title'>
-                {formatDetailsKey(key)}
-              </div>
-              <div className='invoice__nested-value'>
-                {`${tag.data[key]}`}
-              </div>
+          {/* Strings */}
+          {typeof tag.data === 'string' && (
+            <div className='invoice__nested-value'>
+              {tag.data}
             </div>
+          )}
+          {/* Array of Objects */}
+          {Array.isArray(tag.data) && tag.data.map((item) => (
+            <>
+              {Object.keys(item).map((label) => renderNestedItem(label, item[label]))}
+            </>
           ))}
+          {/* Objects */}
+          {(
+            !Array.isArray(tag.data) && (
+              (typeof tag.data !== 'string') || (typeof tag.data !== 'number'))
+            ) && (
+            <>
+              {Object.keys(tag.data).map((label) => renderNestedItem(label, tag.data[label]))}
+            </>
+          )}
         </div>
       </div>
     );
 
     const renderNormalTag = (tag) => (
-      <div className='invoice__item'>
+      <div key={tag.tagName} className='invoice__item'>
         <div className='invoice__item-title'>
           {formatDetailsKey(tag.tagName)}
         </div>
         <div className='invoice__item-value'>
-          {`${tag.data}`}
+          {`${tag.data || '--'}`}
         </div>
       </div>
     )
@@ -218,7 +249,8 @@ export class App extends PureComponent {
       valuePropFormat &&
       valuePropFormat === TIMESTAMP_STRING_KEY
     ) {
-      value = `${formatTimestamp(decodedInvoice[key])}`;
+      // TODO: this breaks
+      // value = `${formatTimestamp(decodedInvoice[key])}`;
     }
 
     return (
@@ -246,6 +278,113 @@ export class App extends PureComponent {
       </div>
     </div>
   );
+
+  renderLNURLDetails = () => {
+    const { decodedInvoice, isInvoiceLoaded } = this.state;
+    const invoiceContainerClassnames = cx(
+      'invoice',
+      { 'invoice--opened': isInvoiceLoaded },
+    );
+
+    return !isInvoiceLoaded ? null : (
+      <div className={invoiceContainerClassnames}>
+        {Object.keys(decodedInvoice).map((key) => {
+          let text = decodedInvoice[key];
+
+          if (key === LNURL_TAG_KEY) {
+            switch (key) {
+              case 'payRequest':
+                text = 'LNURL Pay (payRequest)'
+                break;
+              case 'withdrawRequest':
+                text = 'LNURL Withdraw (withdrawRequest)'
+                break;
+              default:
+                break;
+            }
+
+            return (
+              <div key={key} className='invoice__item'>
+                <div className='invoice__item-title'>
+                  {formatDetailsKey(key)}
+                </div>
+                <div className='invoice__item-value'>
+                  <a href={decodedInvoice[key]}>
+                    {text}
+                  </a>
+                </div>
+              </div>
+            )
+          }
+
+          if (key === CALLBACK_KEY) {
+            return (
+              <div key={key} className='invoice__item'>
+                <div className='invoice__item-title'>
+                  {formatDetailsKey(key)}
+                </div>
+                <div className='invoice__item-value'>
+                  <a href={decodedInvoice[key]}>
+                    {decodedInvoice[key]}
+                  </a>
+                </div>
+              </div>
+            )
+          }
+
+          if (key === LNURL_METADATA_KEY) {
+            const splitMetadata = JSON.parse(decodedInvoice[key]);
+
+            // eslint-disable-next-line array-callback-return
+            const toRender = splitMetadata.map((arrOfData) => {
+              if (arrOfData[0] === 'text/plain') {
+                return (
+                  <div key={key} className='invoice__item'>
+                    <div className='invoice__item-title'>
+                      Description
+                    </div>
+                    <div className='invoice__item-value'>
+                      {arrOfData[1]}
+                    </div>
+                  </div>
+                )
+              }
+
+              if (arrOfData[0] === 'image/png;base64') {
+                return (
+                  <div key={key} className='invoice__item'>
+                    <div className='invoice__item-title'>
+                      Image
+                    </div>
+                    <div className='invoice__item-value'>
+                      <img
+                        alt='Imager'
+                        style={{ maxWidth: '200px' }}
+                        src={`data:image/png;base64,${arrOfData[1]}`}
+                      />
+                    </div>
+                  </div>
+                );
+              }
+            });
+
+            return toRender;
+          }
+
+          return (
+            <div key={key} className='invoice__item'>
+              <div className='invoice__item-title'>
+                {formatDetailsKey(key)}
+              </div>
+              <div className='invoice__item-value'>
+                {decodedInvoice[key]}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   renderSubmit = () => {
     const { isInvoiceLoaded, text } = this.state;
@@ -277,34 +416,15 @@ export class App extends PureComponent {
   }
 
   renderOptions = () => {
-    const { isBitcoinAddrOpened, isInvoiceLoaded } = this.state;
+    const { isInvoiceLoaded } = this.state;
     const optionsClassnames = cx(
       'options',
       { 'options--hide': isInvoiceLoaded },
-    );
-    const bitcoinClassnames = cx(
-      'options__bitcoin',
-      { 'options__bitcoin--opened': isBitcoinAddrOpened },
     );
 
     return (
       <div className={optionsClassnames}>
         <div className='options__wrapper'>
-          <div className={bitcoinClassnames}>
-            <div className='options__bitcoin-address'>
-              {DONATION_BTC}
-            </div>
-            <button
-              onClick={this.handleBitcoinClick}
-              className='options__bitcoin-icon-wrapper'
-            >
-              <img
-                className='options__bitcoin-icon'
-                src={bitcoinImage}
-                alt='Bitcoin'
-              />
-            </button>
-          </div>
           <a
             href={APP_GITHUB}
             className='options__github'
@@ -393,7 +513,7 @@ export class App extends PureComponent {
   }
 
   render() {
-    const { isInvoiceLoaded, hasError } = this.state;
+    const { isLNURL, isInvoiceLoaded, hasError } = this.state;
 
     const appClasses = cx(
       'app',
@@ -423,7 +543,7 @@ export class App extends PureComponent {
           </div>
         </div>
         <div className={appColumnClasses}>
-          {this.renderInvoiceDetails()}
+          {isLNURL ? this.renderLNURLDetails() : this.renderInvoiceDetails()}
           {this.renderErrorDetails()}
         </div>
       </div>
